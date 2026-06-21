@@ -1,0 +1,14 @@
+google_credentials.json
+*.json
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+.vscode/
+.idea/
+*.swp
+*.swo
