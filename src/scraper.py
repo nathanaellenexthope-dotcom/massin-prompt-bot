@@ -1,337 +1,231 @@
+#!/usr/bin/env python3
+import os
+import sys
+import json
+import re
 import requests
 from bs4 import BeautifulSoup
-import urllib.parse
-from urllib.parse import urlparse
+import gspread
+from google.oauth2.service_account import Credentials
+import Levenshtein
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
-}
 
-class ProductScraper:
+class MassInScraper:
     def __init__(self):
+        self.product_name = os.getenv("PRODUCT_NAME", "").strip()
+        if not self.product_name:
+            print("ERREUR: PRODUCT_NAME non défini")
+            sys.exit(1)
+        
         self.sites = [
-            'https://www.mass-in.com',
-            'https://www.music.mass-in.com'
+            "https://www.mass-in.com",
+            "https://www.music.mass-in.com"
         ]
-    
-    def search_product(self, product_name):
-        """Recherche un produit sur les sites mass-in, sinon cherche une image sur internet."""
-        print(f"[INFO] Recherche du produit: '{product_name}'")
         
-        # 1. Essayer de trouver sur mass-in.com et music.mass-in.com
+    def run(self):
+        print(f"Recherche: {self.product_name}")
+        
+        # 1. Scraper les deux sites
+        all_candidates = []
         for site in self.sites:
-            try:
-                print(f"[INFO] Tentative sur {site}...")
-                product_info = self._search_on_site(site, product_name)
-                if product_info:
-                    print(f"[SUCCES] Produit trouve sur {site}")
-                    return product_info
-            except Exception as e:
-                print(f"[ERREUR] Sur {site}: {e}")
-                continue
+            candidates = self._scrape_site(site)
+            all_candidates.extend(candidates)
         
-        # 2. Si non trouve, chercher une image sur internet
-        print(f"[INFO] Produit non trouve sur les sites. Recherche d'image sur internet...")
-        image_url = self._search_image_google(product_name)
+        # 2. Trouver le meilleur match (avec seuil minimum)
+        best = self._find_best_match(self.product_name, all_candidates)
         
-        # 3. Retourner les infos avec le nom fourni et l'image trouvee
-        result = {
-            'name': product_name,
-            'image_url': image_url or '',
-            'product_url': '',
-            'description': '',
-            'category': self._detect_category(product_name, ''),
-            'source': 'internet' if image_url else 'non_trouve'
-        }
+        if not best:
+            print("Aucun produit correspondant trouvé (score insuffisant)")
+            sys.exit(0)
         
-        if image_url:
-            print(f"[SUCCES] Image trouvee sur internet: {image_url[:80]}...")
-        else:
-            print(f"[ATTENTION] Aucune image trouvee pour '{product_name}'")
+        # 3. Extraire l'image (filtrage logos + Unsplash)
+        image_data = self._extract_product_image(best.get("soup"), best.get("name"))
         
-        return result
+        # 4. Générer le prompt publicitaire
+        prompt = self._generate_prompt(best)
+        
+        # 5. Écrire dans Google Sheets
+        self._write_to_sheet(
+            product_name=best["name"],
+            image_url=image_data["url"] if image_data else "",
+            image_link=image_data["url"] if image_data else "",
+            prompt=prompt
+        )
+        
+        print("Sheet mis à jour avec succès")
     
-    def _search_on_site(self, base_url, product_name):
-        """Recherche un produit sur un site specifique."""
-        
-        # Essayer differentes URL de recherche
-        search_urls = [
-            f"{base_url}/shop/?s={urllib.parse.quote(product_name)}",
-            f"{base_url}/?s={urllib.parse.quote(product_name)}",
-            f"{base_url}/shop/search?search={urllib.parse.quote(product_name)}",
-            f"{base_url}/recherche?search={urllib.parse.quote(product_name)}",
-            f"{base_url}/produit/?s={urllib.parse.quote(product_name)}",
-        ]
-        
-        for search_url in search_urls:
-            try:
-                print(f"  [INFO] URL de recherche: {search_url}")
-                response = requests.get(search_url, headers=HEADERS, timeout=15, allow_redirects=True)
-                print(f"  [INFO] Status: {response.status_code}")
-                
-                if response.status_code == 200:
-                    soup = BeautifulSoup(response.content, 'html.parser')
-                    
-                    # Chercher tous les liens de produits
-                    product_links = self._extract_all_product_links(soup, base_url)
-                    print(f"  [INFO] {len(product_links)} liens trouves")
-                    
-                    if product_links:
-                        # Trouver le meilleur match
-                        best_match = self._find_best_match(product_links, product_name)
-                        if best_match:
-                            print(f"  [INFO] Meilleur match: {best_match['text'][:50]}")
-                            return self._scrape_product_page(best_match['url'])
-            except Exception as e:
-                print(f"  [ERREUR] URL {search_url}: {e}")
-                continue
-        
-        return None
-    
-    def _search_image_google(self, product_name):
-        """Cherche une image du produit sur internet via DuckDuckGo (plus simple que Google)."""
+    def _scrape_site(self, base_url: str) -> list[dict]:
+        """Scrape la page de recherche ou liste produits."""
         try:
-            # Utiliser DuckDuckGo Image Search (API simple, pas de blocage)
-            search_query = urllib.parse.quote(product_name + " product")
-            url = f"https://duckduckgo.com/?q={search_query}&iax=images&ia=images"
+            search_url = f"{base_url}/search?q={requests.utils.quote(self.product_name)}"
+            resp = requests.get(search_url, timeout=15, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0"
+            })
+            soup = BeautifulSoup(resp.text, 'html.parser')
             
-            response = requests.get(url, headers=HEADERS, timeout=10)
-            
-            # Extraire les URLs d'images du HTML
-            # Chercher les patterns d'images dans le HTML
-            import re
-            image_urls = re.findall(r'https?://[^"\s]+\.(?:jpg|jpeg|png|webp)', response.text)
-            
-            # Filtrer les URLs valides
-            for img_url in image_urls:
-                if 'icon' not in img_url.lower() and 'logo' not in img_url.lower():
-                    if len(img_url) > 20:
-                        return img_url
-            
-            # Fallback: utiliser une URL d'image generique
-            return self._get_generic_image(product_name)
+            # Adapter selon la structure HTML réelle de Mass-in
+            # Exemple générique :
+            products = []
+            for item in soup.select('.product-item, .product, [class*="product"]'):
+                name_elem = item.select_one('.product-name, .product-title, h2, h3')
+                if name_elem:
+                    products.append({
+                        "name": name_elem.get_text(strip=True),
+                        "url": item.find('a', href=True)['href'] if item.find('a', href=True) else "",
+                        "soup": item,
+                        "source": base_url
+                    })
+            return products
             
         except Exception as e:
-            print(f"  [ERREUR] Recherche image: {e}")
-            return self._get_generic_image(product_name)
+            print(f"[ERREUR SCRAPE {base_url}] {e}")
+            return []
     
-    def _get_generic_image(self, product_name):
-        """Retourne une URL d'image generique basee sur la categorie."""
-        category = self._detect_category(product_name, '')
+    def _find_best_match(self, query: str, candidates: list[dict]) -> dict | None:
+        import Levenshtein
         
-        # URLs d'images generiques par categorie
-        generic_images = {
-            'smartphone': 'https://via.placeholder.com/400x600/4CAF50/FFFFFF?text=Smartphone',
-            'casque': 'https://via.placeholder.com/400x600/2196F3/FFFFFF?text=Casque',
-            'enceinte': 'https://via.placeholder.com/400x600/FF9800/FFFFFF?text=Enceinte',
-            'console': 'https://via.placeholder.com/400x600/F44336/FFFFFF?text=Console',
-            'laptop': 'https://via.placeholder.com/400x600/9C27B0/FFFFFF?text=Laptop',
-            'platine': 'https://via.placeholder.com/400x600/00BCD4/FFFFFF?text=Platine+DJ',
-            'tablette': 'https://via.placeholder.com/400x600/3F51B5/FFFFFF?text=Tablette',
-            'montre': 'https://via.placeholder.com/400x600/E91E63/FFFFFF?text=Montre',
-            'accessoire': 'https://via.placeholder.com/400x600/607D8B/FFFFFF?text=Accessoire',
-            'produit': 'https://via.placeholder.com/400x600/795548/FFFFFF?text=Produit'
-        }
-        
-        return generic_images.get(category, generic_images['produit'])
-    
-    def _extract_all_product_links(self, soup, base_url):
-        """Extrait tous les liens de produits possibles."""
-        links = []
-        
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            text = a.get_text(strip=True)
-            
-            is_product = False
-            
-            # Patterns d'URL specifiques aux sites mass-in
-            url_patterns = [
-                '/product/', '/produit/', '/shop/', '/item/',
-                '/p/', '/products/', '/boutique/', '/catalogue/'
-            ]
-            
-            for pattern in url_patterns:
-                if pattern in href.lower():
-                    is_product = True
-                    break
-            
-            if text and len(text) > 3 and not text.lower() in ['home', 'accueil', 'shop', 'boutique', 'cart', 'panier']:
-                if not is_product and href.startswith(base_url):
-                    is_product = True
-            
-            if is_product and href and text:
-                full_url = href if href.startswith('http') else base_url + href
-                links.append({'url': full_url, 'text': text})
-        
-        return links
-    
-    def _find_best_match(self, links, product_name):
-        """Trouve le lien le plus pertinent."""
-        if not links:
+        if not candidates:
             return None
         
-        product_words = set(product_name.lower().split())
-        best_score = -1
-        best_link = None
+        best_match = None
+        best_score = 0.0
+        query_lower = query.lower().strip()
+        query_words = set(query_lower.split())
         
-        for link in links:
-            link_text = link['text'].lower()
-            url_text = link['url'].lower()
+        for candidate in candidates:
+            name = candidate.get("name", "").lower().strip()
             
-            # Score base sur le texte
-            text_score = sum(2 for word in product_words if word in link_text)
-            # Score base sur l'URL
-            url_score = sum(1 for word in product_words if word in url_text)
-            # Bonus si le nom exact est dans le texte
-            exact_bonus = 5 if product_name.lower() in link_text else 0
+            lev_ratio = Levenshtein.ratio(query_lower, name)
+            name_words = set(name.split())
+            common_words = len(query_words & name_words) / max(len(query_words), len(name_words), 1)
             
-            total_score = text_score + url_score + exact_bonus
+            score = (lev_ratio * 0.7) + (common_words * 0.3)
             
-            if total_score > best_score:
-                best_score = total_score
-                best_link = link
+            if query_lower in name:
+                score += 0.15
+            
+            if score > best_score:
+                best_score = score
+                best_match = candidate
         
-        # Ne retourner que si le score est suffisant
-        if best_score >= 2:
-            return best_link
-        return None
+        MIN_SCORE = 0.65
+        if best_score < MIN_SCORE:
+            print(f"[MATCH REJETE] Score {best_score:.2f} < {MIN_SCORE} pour '{query}'")
+            return None
+        
+        print(f"[MATCH TROUVE] '{best_match['name']}' (score: {best_score:.2f})")
+        return best_match
     
-    def _scrape_product_page(self, product_url):
-        """Scrape une page produit pour extraire les informations."""
+    def _extract_product_image(self, soup, product_name: str) -> dict | None:
+        import re
+        import os
+        
+        if not soup:
+            return self._get_unsplash_image(product_name)
+        
+        LOGO_PATTERNS = [
+            r'logo', r'icon', r'favicon', r'header', r'banner',
+            r'nav', r'footer', r'logo-mass', r'mass-in-logo',
+            r'\.svg$', r'user-', r'cart-', r'menu-', r'arrow-'
+        ]
+        
+        images = soup.find_all('img')
+        valid_images = []
+        
+        for img in images:
+            src = img.get('src', '') or img.get('data-src', '')
+            alt = img.get('alt', '').lower()
+            
+            if not src:
+                continue
+            
+            is_logo = any(re.search(pattern, src, re.I) or re.search(pattern, alt, re.I) 
+                           for pattern in LOGO_PATTERNS)
+            
+            if is_logo:
+                continue
+            
+            width = img.get('width', '')
+            height = img.get('height', '')
+            if width and height:
+                try:
+                    w, h = int(width), int(height)
+                    if w < 100 or h < 100:
+                        continue
+                except ValueError:
+                    pass
+            
+            if src.startswith('/'):
+                base = "https://www.mass-in.com"
+                src = f"{base}{src}"
+            elif not src.startswith('http'):
+                continue
+            
+            valid_images.append({
+                "url": src,
+                "alt": alt,
+                "source": "site"
+            })
+        
+        if not valid_images:
+            unsplash = self._get_unsplash_image(product_name)
+            if unsplash:
+                return {"url": unsplash, "alt": product_name, "source": "unsplash"}
+        
+        return valid_images[0] if valid_images else None
+    
+    def _get_unsplash_image(self, query: str) -> str | None:
+        access_key = os.getenv("UNSPLASH_ACCESS_KEY")
+        if not access_key:
+            return None
+        
+        url = "https://api.unsplash.com/search/photos"
+        headers = {"Authorization": f"Client-ID {access_key}"}
+        params = {"query": query, "per_page": 1, "orientation": "squarish"}
+        
         try:
-            print(f"  [INFO] Scraping: {product_url}")
-            response = requests.get(product_url, headers=HEADERS, timeout=15)
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            name = self._extract_product_name(soup)
-            image_url = self._extract_product_image(soup, product_url)
-            description = self._extract_description(soup)
-            category = self._detect_category(name, description)
-            
-            result = {
-                'name': name or 'Produit inconnu',
-                'image_url': image_url or '',
-                'product_url': product_url,
-                'description': description or '',
-                'category': category,
-                'source': product_url
-            }
-            
-            print(f"  [INFO] Nom: {result['name'][:50]}")
-            print(f"  [INFO] Image: {result['image_url'][:80] if result['image_url'] else 'AUCUNE'}")
-            print(f"  [INFO] Categorie: {category}")
-            
-            return result
-            
+            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            data = resp.json()
+            results = data.get("results", [])
+            if results:
+                return results[0]["urls"]["regular"]
         except Exception as e:
-            print(f"  [ERREUR] Scraping page {product_url}: {e}")
-            return None
-    
-    def _extract_product_name(self, soup):
-        """Extrait le nom du produit."""
-        selectors = [
-            'h1.product-title', 'h1.product_name', 'h1.entry-title',
-            '.product-title h1', 'h1[itemprop="name"]',
-            '.woocommerce-product-details__short-description h2',
-            'h1',
-        ]
-        for selector in selectors:
-            elem = soup.select_one(selector)
-            if elem:
-                name = elem.get_text(strip=True)
-                if name and len(name) > 2:
-                    return name
-        return None
-    
-    def _extract_product_image(self, soup, base_url):
-        """Extrait l'URL de l'image du produit."""
-        selectors = [
-            'img.wp-post-image',
-            'img.attachment-woocommerce_single',
-            'img.attachment-woocommerce_thumbnail',
-            'img[itemprop="image"]',
-            '.woocommerce-product-gallery__image img',
-            '.woocommerce-product-gallery__image--placeholder img',
-            '.product-image img',
-            'figure img',
-            '.wp-block-image img',
-            'img[data-src]',
-        ]
-        
-        for selector in selectors:
-            img = soup.select_one(selector)
-            if img:
-                src = img.get('data-src') or img.get('data-lazy-src') or img.get('src')
-                if src:
-                    if src.startswith('//'):
-                        src = 'https:' + src
-                    elif src.startswith('/'):
-                        parsed = urlparse(base_url)
-                        src = f"{parsed.scheme}://{parsed.netloc}{src}"
-                    
-                    if any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']):
-                        return src
-                    elif 'wp-content' in src or 'uploads' in src:
-                        return src
-        
-        # Chercher toutes les images de la page
-        all_images = soup.find_all('img')
-        for img in all_images:
-            src = img.get('data-src') or img.get('data-lazy-src') or img.get('src')
-            if src and len(src) > 10:
-                if src.startswith('//'):
-                    src = 'https:' + src
-                elif src.startswith('/'):
-                    parsed = urlparse(base_url)
-                    src = f"{parsed.scheme}://{parsed.netloc}{src}"
-                
-                width = img.get('width', '')
-                if width and width.isdigit() and int(width) < 100:
-                    continue
-                
-                if any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']):
-                    return src
+            print(f"[UNSPLASH ERROR] {e}")
         
         return None
     
-    def _extract_description(self, soup):
-        """Extrait la description du produit."""
-        selectors = [
-            '.product-description',
-            '.woocommerce-product-details__short-description',
-            '[itemprop="description"]',
-            '.description',
-            '.product-summary',
-            '.woocommerce-product-details',
-        ]
-        for selector in selectors:
-            elem = soup.select_one(selector)
-            if elem:
-                desc = elem.get_text(strip=True)
-                if desc and len(desc) > 10:
-                    return desc
-        return None
+    def _generate_prompt(self, product: dict) -> str:
+        """Génère un prompt publicitaire pour le produit."""
+        name = product.get("name", "Produit")
+        return (
+            f"Crée une publicité Instagram captivante pour le produit '{name}'. "
+            f"Style moderne, éclairage studio, fond dégradé, typographie élégante. "
+            f"Inclure un slogan accrocheur et un appel à l'action."
+        )
     
-    def _detect_category(self, name, description):
-        """Detecte la categorie du produit pour adapter le prompt."""
-        text = f"{name} {description}".lower() if name else ""
+    def _write_to_sheet(self, product_name: str, image_url: str, image_link: str, prompt: str):
+        """Écrit une ligne dans Google Sheets."""
+        creds_json = os.getenv("GOOGLE_CREDS")
+        spreadsheet_id = os.getenv("SPREADSHEET_ID")
         
-        categories = {
-            'smartphone': ['smartphone', 'phone', 'mobile', 'redmagic', 'iphone', 'samsung', 'xiaomi', 'oppo'],
-            'casque': ['casque', 'headphone', 'headset', 'ecouteur', 'earphone', 'hdj', 'airpods', 'beats'],
-            'enceinte': ['enceinte', 'speaker', 'boombox', 'partybox', 'soundbar', 'jbl', 'bose', 'sonos'],
-            'console': ['console', 'ps5', 'playstation', 'xbox', 'nintendo', 'switch'],
-            'laptop': ['laptop', 'ordinateur', 'pc', 'notebook', 'thinkpad', 'hp', 'lenovo', 'macbook'],
-            'platine': ['platine', 'dj', 'mixstream', 'pioneer', 'numark', 'controller', 'deck'],
-            'tablette': ['tablette', 'tablet', 'ipad', 'galaxy tab'],
-            'montre': ['montre', 'watch', 'smartwatch', 'apple watch', 'galaxy watch'],
-            'accessoire': ['accessoire', 'cable', 'housse', 'chargeur', 'adaptateur', 'etui', 'support']
-        }
+        if not creds_json or not spreadsheet_id:
+            print("Variables GOOGLE_CREDS ou SPREADSHEET_ID manquantes")
+            return
         
-        for cat, keywords in categories.items():
-            if any(kw in text for kw in keywords):
-                return cat
-        return 'produit'
+        # Sauvegarde temporaire du JSON
+        with open("/tmp/google_creds.json", "w") as f:
+            f.write(creds_json)
+        
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_file("/tmp/google_creds.json", scopes=scopes)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(spreadsheet_id).sheet1
+        
+        # Ajoute une ligne : Nom | Image URL | Lien Image | Prompt
+        sheet.append_row([product_name, image_url, image_link, prompt])
+        print(f"Ligne ajoutée: {product_name}")
+
+
+if __name__ == "__main__":
+    scraper = MassInScraper()
+    scraper.run()
