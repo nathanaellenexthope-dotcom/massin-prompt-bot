@@ -1,0 +1,16 @@
+name: Discord Trigger
+
+on:
+  repository_dispatch:
+    types: [discord-message]
+
+jobs:
+  trigger-prompt-generator:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Prompt Generator
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: Massin Prompt Generator
+          token: ${{ secrets.GITHUB_TOKEN }}
+          inputs: '{"products":"${{ github.event.client_payload.products }}"}'
