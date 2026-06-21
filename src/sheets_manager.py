@@ -42,10 +42,14 @@ class SheetsManager:
             headers = ['Nom du produit', 'Image', 'Lien image', 'Prompt']
             worksheet.append_row(headers)
             
-            worksheet.format('A1:D1', {
-                'textFormat': {'bold': True},
-                'backgroundColor': {'red': 0.2, 'green': 0.4, 'blue': 0.8}
-            })
+            # Format simplifie compatible avec toutes les versions de gspread
+            try:
+                worksheet.format('A1:D1', {
+                    'textFormat': {'bold': True},
+                    'backgroundColor': {'red': 0.2, 'green': 0.4, 'blue': 0.8}
+                })
+            except Exception as e:
+                print(f"Note: Formatage des en-tetes non disponible ({e})")
             
             return worksheet
     
