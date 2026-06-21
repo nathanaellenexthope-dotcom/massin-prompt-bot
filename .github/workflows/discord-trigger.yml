@@ -1,16 +1,34 @@
-name: Discord Trigger
+name: Discord Product Trigger
 
 on:
   repository_dispatch:
-    types: [discord-message]
+    types: [discord-product-trigger]
 
 jobs:
-  trigger-prompt-generator:
+  scrape-and-fill-sheet:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
     steps:
-      - name: Trigger Prompt Generator
-        uses: benc-uk/workflow-dispatch@v1
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          workflow: Massin Prompt Generator
-          token: ${{ secrets.GITHUB_TOKEN }}
-          inputs: '{"products":"${{ github.event.client_payload.products }}"}'
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 python-Levenshtein gspread google-auth
+
+      - name: Run scraper
+        env:
+          PRODUCT_NAME: ${{ github.event.client_payload.product_name }}
+          GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+        run: python scraper.py
+
+      - name: Cleanup
+        run: echo "Workflow terminé - le runner s'arrête automatiquement"
