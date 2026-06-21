@@ -1,0 +1,47 @@
+name: Massin Prompt Generator
+
+on:
+  workflow_dispatch:
+    inputs:
+      products:
+        description: 'Noms des produits (separes par des virgules)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  generate-prompts:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install gspread==6.1.2 requests==2.32.3 beautifulsoup4==4.12.3 lxml==5.2.2 google-auth==2.29.0 google-auth-oauthlib==1.2.0 google-auth-httplib2==0.2.0
+      
+      - name: Setup Google Credentials
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > google_credentials.json
+      
+      - name: Run Prompt Generator
+        env:
+          PRODUCTS: ${{ github.event.inputs.products }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS_PATH: google_credentials.json
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python main.py
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f google_credentials.json
