@@ -1,55 +1,36 @@
+#!/usr/bin/env python3
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime
+
 
 class SheetsManager:
-    SCOPES = [
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive'
-    ]
-    
-    def __init__(self, spreadsheet_id, credentials_path='google_credentials.json'):
+    def __init__(self, spreadsheet_id: str, credentials_path: str):
         self.spreadsheet_id = spreadsheet_id
         self.credentials_path = credentials_path
-        self.client = None
-        self.spreadsheet = None
-        self._connect()
+        self.client = self._authorize()
     
-    def _connect(self):
-        credentials = Credentials.from_service_account_file(
-            self.credentials_path,
-            scopes=self.SCOPES
-        )
-        self.client = gspread.authorize(credentials)
-        self.spreadsheet = self.client.open_by_key(self.spreadsheet_id)
+    def _authorize(self):
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_file(self.credentials_path, scopes=scopes)
+        return gspread.authorize(creds)
     
-    def create_or_get_sheet(self, sheet_name=None):
-        if sheet_name is None:
-            sheet_name = datetime.now().strftime('%Y-%m-%d')
-        
+    def create_or_get_sheet(self, sheet_name: str):
+        spreadsheet = self.client.open_by_key(self.spreadsheet_id)
         try:
-            worksheet = self.spreadsheet.worksheet(sheet_name)
-            print(f"Feuille '{sheet_name}' trouvee.")
-            return worksheet
+            worksheet = spreadsheet.worksheet(sheet_name)
+            print(f"Sheet existant trouve: {sheet_name}")
         except gspread.WorksheetNotFound:
-            worksheet = self.spreadsheet.add_worksheet(
-                title=sheet_name,
-                rows=1000,
-                cols=10
-            )
-            print(f"Nouvelle feuille '{sheet_name}' creee.")
-            
-            headers = ['Nom du produit', 'Image', 'Lien image', 'Prompt']
-            worksheet.append_row(headers)
-            
-            return worksheet
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows="100", cols="4")
+            worksheet.append_row(["Nom du produit", "Image URL", "Lien Image", "Prompt"])
+            print(f"Nouveau sheet cree: {sheet_name}")
+        return worksheet
     
-    def add_product(self, worksheet, product_name, image_url, prompt):
-        image_formula = f'=IMAGE("{image_url}")' if image_url else ''
-        row = [product_name, image_formula, image_url, prompt]
-        worksheet.append_row(row)
-        print(f"Produit ajoute : {product_name}")
+    def add_product(self, worksheet, product_name: str, image_url: str, prompt: str):
+        worksheet.append_row([product_name, image_url, image_url, prompt])
+        print(f"Produit ajoute: {product_name}")
     
     def get_sheet_url(self, worksheet):
-        sheet_id = worksheet.id
-        return f"https://docs.google.com/spreadsheets/d/{self.spreadsheet_id}/edit#gid={sheet_id}"
+        return f"https://docs.google.com/spreadsheets/d/{self.spreadsheet_id}/edit#gid={worksheet.id}"
