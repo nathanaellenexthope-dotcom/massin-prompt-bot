@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 import os
-import sys
-import json
 import re
 import requests
 from bs4 import BeautifulSoup
-import gspread
-from google.oauth2.service_account import Credentials
 from thefuzz import fuzz
 
 
@@ -21,20 +17,17 @@ class MassInScraper:
         """Recherche un produit par nom sur les deux sites."""
         print(f"Recherche: {product_name}")
         
-        # 1. Scraper les deux sites
         all_candidates = []
         for site in self.sites:
             candidates = self._scrape_site(site, product_name)
             all_candidates.extend(candidates)
         
-        # 2. Trouver le meilleur match (avec seuil minimum)
         best = self._find_best_match(product_name, all_candidates)
         
         if not best:
-            print(f"Aucun produit correspondant trouvé pour '{product_name}'")
+            print(f"Aucun produit correspondant trouve pour '{product_name}'")
             return None
         
-        # 3. Extraire l'image (filtrage logos + Unsplash)
         image_data = self._extract_product_image(best.get("soup"), best.get("name"))
         
         return {
@@ -44,41 +37,15 @@ class MassInScraper:
             "source": best.get("source", "")
         }
     
-    def run(self):
-        """Méthode legacy pour compatibilité directe."""
-        product_name = os.getenv("PRODUCT_NAME", "").strip()
-        if not product_name:
-            print("ERREUR: PRODUCT_NAME non défini")
-            sys.exit(1)
-            
-        result = self.search_product(product_name)
-        
-        if not result:
-            sys.exit(0)
-        
-        # 4. Générer le prompt publicitaire
-        prompt = self._generate_prompt(result)
-        
-        # 5. Écrire dans Google Sheets
-        self._write_to_sheet(
-            product_name=result["name"],
-            image_url=result["image_url"],
-            image_link=result["image_url"],
-            prompt=prompt
-        )
-        
-        print("Sheet mis à jour avec succès")
-    
     def _scrape_site(self, base_url: str, product_name: str) -> list[dict]:
-        """Scrape la page de recherche ou liste produits."""
+        """Scrape la page de recherche."""
         try:
             search_url = f"{base_url}/search?q={requests.utils.quote(product_name)}"
             resp = requests.get(search_url, timeout=15, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             })
             soup = BeautifulSoup(resp.text, 'html.parser')
             
-            # Adapter selon la structure HTML réelle de Mass-in
             products = []
             for item in soup.select('.product-item, .product, [class*="product"]'):
                 name_elem = item.select_one('.product-name, .product-title, h2, h3')
@@ -205,37 +172,3 @@ class MassInScraper:
             print(f"[UNSPLASH ERROR] {e}")
         
         return None
-    
-    def _generate_prompt(self, product: dict) -> str:
-        """Génère un prompt publicitaire pour le produit."""
-        name = product.get("name", "Produit")
-        return (
-            f"Crée une publicité Instagram captivante pour le produit '{name}'. "
-            f"Style moderne, éclairage studio, fond dégradé, typographie élégante. "
-            f"Inclure un slogan accrocheur et un appel à l'action."
-        )
-    
-    def _write_to_sheet(self, product_name: str, image_url: str, image_link: str, prompt: str):
-        """Écrit une ligne dans Google Sheets."""
-        creds_json = os.getenv("GOOGLE_CREDS")
-        spreadsheet_id = os.getenv("SPREADSHEET_ID")
-        
-        if not creds_json or not spreadsheet_id:
-            print("Variables GOOGLE_CREDS ou SPREADSHEET_ID manquantes")
-            return
-        
-        with open("/tmp/google_creds.json", "w") as f:
-            f.write(creds_json)
-        
-        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds = Credentials.from_service_account_file("/tmp/google_creds.json", scopes=scopes)
-        client = gspread.authorize(creds)
-        sheet = client.open_by_key(spreadsheet_id).sheet1
-        
-        sheet.append_row([product_name, image_url, image_link, prompt])
-        print(f"Ligne ajoutée: {product_name}")
-
-
-if __name__ == "__main__":
-    scraper = MassInScraper()
-    scraper.run()
