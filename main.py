@@ -19,18 +19,16 @@ def send_discord_notification(webhook_url, message):
         print(f"Erreur notification Discord: {e}")
 
 def main():
-    if len(sys.argv) > 1:
-        product_names = sys.argv[1:]
-    elif os.environ.get('PRODUCTS'):
-        product_names = [p.strip() for p in os.environ.get('PRODUCTS').split(',')]
-    elif os.environ.get('PRODUCT_NAME'):
-        product_names = [os.environ.get('PRODUCT_NAME').strip()]
-    else:
-        print("Erreur: Aucun produit specifie.")
-        print("Usage: python main.py 'nom produit 1' 'nom produit 2'")
-        sys.exit(1)
+    product_name = os.environ.get('PRODUCT_NAME', '').strip()
     
-    print(f"Demarrage du workflow pour {len(product_names)} produit(s)...")
+    if not product_name:
+        if len(sys.argv) > 1:
+            product_name = sys.argv[1]
+        else:
+            print("Erreur: Aucun produit specifie. Definir PRODUCT_NAME.")
+            sys.exit(1)
+    
+    print(f"Demarrage du workflow pour: '{product_name}'")
     
     scraper = MassInScraper()
     prompt_gen = PromptGenerator()
@@ -47,62 +45,45 @@ def main():
     sheet_name = datetime.now().strftime('%Y-%m-%d')
     worksheet = sheets.create_or_get_sheet(sheet_name)
     
-    results = []
-    not_found = []
+    print(f"Recherche du produit: {product_name}")
     
-    for product_name in product_names:
-        print(f"Recherche du produit: {product_name}")
+    product_info = scraper.search_product(product_name)
+    
+    if product_info:
+        print(f"Produit trouve: {product_info['name']}")
+        prompt = prompt_gen.generate_prompt(product_info)
         
-        product_info = scraper.search_product(product_name)
+        sheets.add_product(
+            worksheet,
+            product_info['name'],
+            product_info['image_url'],
+            prompt
+        )
         
-        if product_info:
-            print(f"Produit trouve: {product_info['name']}")
-            prompt = prompt_gen.generate_prompt(product_info)
-            
-            sheets.add_product(
-                worksheet,
-                product_info['name'],
-                product_info['image_url'],
-                prompt
-            )
-            
-            results.append({
-                'name': product_info['name'],
-                'status': 'Succes',
-                'image': product_info['image_url']
-            })
-        else:
-            print(f"Produit non trouve: {product_name}")
-            not_found.append(product_name)
-            results.append({
-                'name': product_name,
-                'status': 'Non trouve',
-                'image': ''
-            })
+        status = "Succes"
+        image_url = product_info['image_url']
+    else:
+        print(f"Produit non trouve: {product_name}")
+        status = "Non trouve"
+        image_url = ""
     
     webhook_url = os.environ.get('DISCORD_WEBHOOK_URL')
     if webhook_url:
         sheet_url = sheets.get_sheet_url(worksheet)
         
-        message = "Workflow termine !\n\n"
-        message += f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        message += "Resultats:\n"
-        
-        for r in results:
-            emoji = "✅" if r['status'] == 'Succes' else "❌"
-            message += f"{emoji} {r['name']}: {r['status']}\n"
-        
-        if not_found:
-            message += f"\nProduits non trouves ({len(not_found)}):\n"
-            for p in not_found:
-                message += f"- {p}\n"
-        
-        message += f"\nGoogle Sheet: {sheet_url}"
+        emoji = "✅" if status == "Succes" else "❌"
+        message = (
+            f"Workflow termine !\n\n"
+            f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Produit: {product_name}\n"
+            f"Statut: {emoji} {status}\n"
+            f"Google Sheet: {sheet_url}"
+        )
         
         send_discord_notification(webhook_url, message)
         print("Notification Discord envoyee.")
     
-    print(f"Workflow termine avec succes !")
+    print(f"Workflow termine !")
     print(f"Sheet: {sheets.get_sheet_url(worksheet)}")
 
 if __name__ == '__main__':
