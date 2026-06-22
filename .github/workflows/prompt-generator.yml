@@ -28,9 +28,9 @@ jobs:
 
       - name: Setup Google Credentials
         env:
-          GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
         run: |
-          echo "$GOOGLE_CREDS" > /tmp/google_credentials.json
+          echo "$GOOGLE_CREDS_JSON" > /tmp/google_credentials.json
 
       - name: Run Prompt Generator
         env:
@@ -43,3 +43,4 @@ jobs:
 
       - name: Cleanup
         run: rm -f /tmp/google_credentials.json
+      
