@@ -3,6 +3,12 @@ name: Discord Product Trigger
 on:
   repository_dispatch:
     types: [discord-product-trigger]
+  workflow_dispatch:  # ← Ajoute ça pour le déclenchement manuel
+    inputs:
+      product_name:
+        description: 'Nom du produit'
+        required: true
+        default: 'casque audio'
 
 jobs:
   scrape-and-fill-sheet:
@@ -19,17 +25,13 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Run scraper
         env:
-          PRODUCT_NAME: ${{ github.event.client_payload.product_name }}
+          PRODUCT_NAME: ${{ github.event.client_payload.product_name || github.event.inputs.product_name }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS_PATH: ${{ secrets.GOOGLE_CREDENTIALS_PATH }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
         run: python main.py
-
-      - name: Cleanup
-        run: echo "Workflow termine - le runner s'arrete automatiquement"
