@@ -81,9 +81,8 @@ class MassInScraper:
             print(f"[ERREUR SCRAPE {base_url}] {e}")
             return []
 
-        def _find_best_match(self, query: str, candidates: list[dict]) -> dict | None:
-        from thefuzz import fuzz
-        
+    def _find_best_match(self, query: str, candidates: list[dict]) -> dict | None:
+        """Trouve le meilleur match avec un score minimum requis."""
         if not candidates:
             return None
         
@@ -117,9 +116,7 @@ class MassInScraper:
         return best_match
     
     def _extract_product_image(self, soup, product_name: str) -> dict | None:
-        import re
-        import os
-        
+        """Extrait l'image produit en filtrant les logos. Fallback Unsplash."""
         if not soup:
             return self._get_unsplash_image(product_name)
         
@@ -175,6 +172,7 @@ class MassInScraper:
         return valid_images[0] if valid_images else None
     
     def _get_unsplash_image(self, query: str) -> str | None:
+        """Recherche une image sur Unsplash API."""
         access_key = os.getenv("UNSPLASH_ACCESS_KEY")
         if not access_key:
             return None
@@ -212,7 +210,6 @@ class MassInScraper:
             print("Variables GOOGLE_CREDS ou SPREADSHEET_ID manquantes")
             return
         
-        # Sauvegarde temporaire du JSON
         with open("/tmp/google_creds.json", "w") as f:
             f.write(creds_json)
         
@@ -221,10 +218,8 @@ class MassInScraper:
         client = gspread.authorize(creds)
         sheet = client.open_by_key(spreadsheet_id).sheet1
         
-        # Ajoute une ligne : Nom | Image URL | Lien Image | Prompt
         sheet.append_row([product_name, image_url, image_link, prompt])
         print(f"Ligne ajoutée: {product_name}")
-
 
 if __name__ == "__main__":
     scraper = MassInScraper()
