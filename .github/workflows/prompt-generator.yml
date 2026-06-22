@@ -3,45 +3,43 @@ name: Massin Prompt Generator
 on:
   workflow_dispatch:
     inputs:
-      products:
-        description: 'Noms des produits (separes par des virgules)'
+      product_name:
+        description: 'Nom du produit a rechercher'
         required: true
-        type: string
-
-permissions:
-  contents: read
+        default: 'casque audio'
 
 jobs:
   generate-prompts:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Install dependencies
         run: |
-          pip install gspread==6.1.2 requests==2.32.3 beautifulsoup4==4.12.3 lxml==5.2.2 google-auth==2.29.0 google-auth-oauthlib==1.2.0 google-auth-httplib2==0.2.0
-      
+          pip install --no-cache-dir -r requirements.txt
+
       - name: Setup Google Credentials
+        env:
+          GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
         run: |
-          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > google_credentials.json
-      
+          echo "$GOOGLE_CREDS" > /tmp/google_credentials.json
+
       - name: Run Prompt Generator
         env:
-          PRODUCTS: ${{ github.event.inputs.products }}
+          PRODUCT_NAME: ${{ github.event.inputs.product_name }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          GOOGLE_CREDENTIALS_PATH: google_credentials.json
+          GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          python main.py
-      
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+        run: python main.py
+
       - name: Cleanup
-        if: always()
-        run: |
-          rm -f google_credentials.json
+        run: rm -f /tmp/google_credentials.json
