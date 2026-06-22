@@ -12,59 +12,73 @@ from thefuzz import fuzz
 
 class MassInScraper:
     def __init__(self):
-        self.product_name = os.getenv("PRODUCT_NAME", "").strip()
-        if not self.product_name:
-            print("ERREUR: PRODUCT_NAME non défini")
-            sys.exit(1)
-        
         self.sites = [
             "https://www.mass-in.com",
             "https://www.music.mass-in.com"
         ]
         
-    def run(self):
-        print(f"Recherche: {self.product_name}")
+    def search_product(self, product_name: str) -> dict | None:
+        """Recherche un produit par nom sur les deux sites."""
+        print(f"Recherche: {product_name}")
         
         # 1. Scraper les deux sites
         all_candidates = []
         for site in self.sites:
-            candidates = self._scrape_site(site)
+            candidates = self._scrape_site(site, product_name)
             all_candidates.extend(candidates)
         
         # 2. Trouver le meilleur match (avec seuil minimum)
-        best = self._find_best_match(self.product_name, all_candidates)
+        best = self._find_best_match(product_name, all_candidates)
         
         if not best:
-            print("Aucun produit correspondant trouvé (score insuffisant)")
-            sys.exit(0)
+            print(f"Aucun produit correspondant trouvé pour '{product_name}'")
+            return None
         
         # 3. Extraire l'image (filtrage logos + Unsplash)
         image_data = self._extract_product_image(best.get("soup"), best.get("name"))
         
+        return {
+            "name": best["name"],
+            "url": best.get("url", ""),
+            "image_url": image_data["url"] if image_data else "",
+            "source": best.get("source", "")
+        }
+    
+    def run(self):
+        """Méthode legacy pour compatibilité directe."""
+        product_name = os.getenv("PRODUCT_NAME", "").strip()
+        if not product_name:
+            print("ERREUR: PRODUCT_NAME non défini")
+            sys.exit(1)
+            
+        result = self.search_product(product_name)
+        
+        if not result:
+            sys.exit(0)
+        
         # 4. Générer le prompt publicitaire
-        prompt = self._generate_prompt(best)
+        prompt = self._generate_prompt(result)
         
         # 5. Écrire dans Google Sheets
         self._write_to_sheet(
-            product_name=best["name"],
-            image_url=image_data["url"] if image_data else "",
-            image_link=image_data["url"] if image_data else "",
+            product_name=result["name"],
+            image_url=result["image_url"],
+            image_link=result["image_url"],
             prompt=prompt
         )
         
         print("Sheet mis à jour avec succès")
     
-    def _scrape_site(self, base_url: str) -> list[dict]:
+    def _scrape_site(self, base_url: str, product_name: str) -> list[dict]:
         """Scrape la page de recherche ou liste produits."""
         try:
-            search_url = f"{base_url}/search?q={requests.utils.quote(self.product_name)}"
+            search_url = f"{base_url}/search?q={requests.utils.quote(product_name)}"
             resp = requests.get(search_url, timeout=15, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0"
             })
             soup = BeautifulSoup(resp.text, 'html.parser')
             
             # Adapter selon la structure HTML réelle de Mass-in
-            # Exemple générique :
             products = []
             for item in soup.select('.product-item, .product, [class*="product"]'):
                 name_elem = item.select_one('.product-name, .product-title, h2, h3')
@@ -220,6 +234,7 @@ class MassInScraper:
         
         sheet.append_row([product_name, image_url, image_link, prompt])
         print(f"Ligne ajoutée: {product_name}")
+
 
 if __name__ == "__main__":
     scraper = MassInScraper()
