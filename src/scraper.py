@@ -80,42 +80,41 @@ class MassInScraper:
         except Exception as e:
             print(f"[ERREUR SCRAPE {base_url}] {e}")
             return []
-    
-  def _find_best_match(self, query: str, candidates: list[dict]) -> dict | None:
-    from thefuzz import fuzz
-    
-    if not candidates:
-        return None
-    
-    best_match = None
-    best_score = 0.0
-    query_lower = query.lower().strip()
-    query_words = set(query_lower.split())
-    
-    for candidate in candidates:
-        name = candidate.get("name", "").lower().strip()
+
+        def _find_best_match(self, query: str, candidates: list[dict]) -> dict | None:
+        from thefuzz import fuzz
         
-        # thefuzz ratio (0-100) → normalisé en 0-1
-        fuzz_ratio = fuzz.ratio(query_lower, name) / 100.0
-        name_words = set(name.split())
-        common_words = len(query_words & name_words) / max(len(query_words), len(name_words), 1)
+        if not candidates:
+            return None
         
-        score = (fuzz_ratio * 0.7) + (common_words * 0.3)
+        best_match = None
+        best_score = 0.0
+        query_lower = query.lower().strip()
+        query_words = set(query_lower.split())
         
-        if query_lower in name:
-            score += 0.15
+        for candidate in candidates:
+            name = candidate.get("name", "").lower().strip()
+            
+            fuzz_ratio = fuzz.ratio(query_lower, name) / 100.0
+            name_words = set(name.split())
+            common_words = len(query_words & name_words) / max(len(query_words), len(name_words), 1)
+            
+            score = (fuzz_ratio * 0.7) + (common_words * 0.3)
+            
+            if query_lower in name:
+                score += 0.15
+            
+            if score > best_score:
+                best_score = score
+                best_match = candidate
         
-        if score > best_score:
-            best_score = score
-            best_match = candidate
-    
-    MIN_SCORE = 0.65
-    if best_score < MIN_SCORE:
-        print(f"[MATCH REJETE] Score {best_score:.2f} < {MIN_SCORE} pour '{query}'")
-        return None
-    
-    print(f"[MATCH TROUVE] '{best_match['name']}' (score: {best_score:.2f})")
-    return best_match
+        MIN_SCORE = 0.65
+        if best_score < MIN_SCORE:
+            print(f"[MATCH REJETE] Score {best_score:.2f} < {MIN_SCORE} pour '{query}'")
+            return None
+        
+        print(f"[MATCH TROUVE] '{best_match['name']}' (score: {best_score:.2f})")
+        return best_match
     
     def _extract_product_image(self, soup, product_name: str) -> dict | None:
         import re
