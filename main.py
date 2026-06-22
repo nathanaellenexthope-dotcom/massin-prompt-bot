@@ -3,7 +3,7 @@ import sys
 import os
 from datetime import datetime
 
-from src.scraper import ProductScraper
+from src.scraper import MassInScraper
 from src.prompt_generator import PromptGenerator
 from src.sheets_manager import SheetsManager
 
@@ -36,7 +36,7 @@ def main():
     
     print(f"Demarrage du workflow pour le produit: '{product_name}'")
     
-    scraper = ProductScraper()
+   scraper = MassInScraper()
     prompt_gen = PromptGenerator()
     
     spreadsheet_id = os.environ.get('GOOGLE_SHEET_ID')
