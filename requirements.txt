@@ -1,7 +1,7 @@
-gspread==6.1.2
-requests==2.32.3
-beautifulsoup4==4.12.3
-lxml==5.2.2
-google-auth==2.29.0
-google-auth-oauthlib==1.2.0
-google-auth-httplib2==0.2.0
+requests
+beautifulsoup4
+gspread
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+thefuzz
