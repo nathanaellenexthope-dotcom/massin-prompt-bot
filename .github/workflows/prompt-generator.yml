@@ -7,6 +7,9 @@ on:
         description: 'Nom du produit a rechercher'
         required: true
         default: 'casque audio'
+  
+  repository_dispatch:
+    types: [discord-product-trigger]
 
 jobs:
   generate-prompts:
@@ -28,19 +31,17 @@ jobs:
 
       - name: Setup Google Credentials
         env:
-          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+          GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
         run: |
-          echo "$GOOGLE_CREDS_JSON" > /tmp/google_credentials.json
+          echo "$GOOGLE_CREDS" > /tmp/google_credentials.json
 
       - name: Run Prompt Generator
         env:
-          PRODUCT_NAME: ${{ github.event.inputs.product_name }}
+          PRODUCT_NAME: ${{ github.event.inputs.product_name || github.event.client_payload.product_name }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
         run: python main.py
 
       - name: Cleanup
         run: rm -f /tmp/google_credentials.json
-      
